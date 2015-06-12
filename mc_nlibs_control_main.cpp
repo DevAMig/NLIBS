@@ -187,7 +187,7 @@ private:
 		param_t q_zrot_drag;
 		param_t q_rotor_radius;
 		param_t q_rotor_twist_angle;
-		param_t q_rotor _root_angle;
+		param_t q_rotor_root_angle;
 		param_t q_motor_cst;
 
 		param_t thr_min;
@@ -235,7 +235,7 @@ private:
 		float q_zrot_drag;
 		float q_rotor_radius;
 		float q_rotor_twist_angle;
-		float q_rotor _root_angle;
+		float q_rotor_root_angle;
 		float q_motor_cst;
 
 		float thr_min;
@@ -485,7 +485,7 @@ MulticopterNLIBSControl::MulticopterNLIBSControl() :
 	_params_handles.man_yaw_max			= param_find("NLIBSC_LAND_SPEED");
 
 	/* fetch initial parameter values */
-	parameters_update();
+	parameters_update(true);
 }
 
 MulticopterNLIBSControl::~MulticopterNLIBSControl()
@@ -512,43 +512,119 @@ MulticopterNLIBSControl::~MulticopterNLIBSControl()
 	pos_control::g_control = nullptr;
 }
 
-void MulticopterNLIBSControl::parameter_update()
+void MulticopterNLIBSControl::parameter_update(bool force)
 {
+	bool updated;
 	float v;
-/*
-		float q_rotor_radius;
-		float q_rotor_twist_angle;
-		float q_rotor _root_angle;
-		float q_motor_cst;
+	struct parameter_update_s param_upd;
 
-		float thr_min;
-		float thr_max;
-		float tilt_max_air;
-		float land_speed;
-		float tilt_max_land;
-		float man_roll_max;
-		float man_pitch_max;
-		float man_yaw_max;
-		float yaw_ff;
-		float roll_rate_max;
-		float pitch_rate_max;
-		float yaw_rate_max;
+	orb_check(_params_sub, &updated);
 
-		math::Vector<3> nlibs_rate_max; */
+	if (updated) {
+		orb_copy(ORB_ID(parameter_update), _params_sub, &param_upd);
+	}
 
-	/* Quadrotor parameters */
-	param_get(_params_handles.q_mass, &_params.q_mass);
-	param_get(_params_handles.q_ix_moment, &_params.q_ix_moment);
-	param_get(_params_handles.q_iy_moment, &_params.q_iy_moment);
-	param_get(_params_handles.q_iz_moment, &_params.q_iz_moment);
-	param_get(_params_handles.q_arm_length, &_params.q_arm_length);
-	param_get(_params_handles.q_drag_coeff, &_params.q_drag_coeff);
-	param_get(_params_handles.q_xlin_drag, &_params.q_xlin_drag);
-	param_get(_params_handles.q_ylin_drag, &_params.q_ylin_drag);
-	param_get(_params_handles.q_zlin_drag, &_params.q_zlin_drag);
-	param_get(_params_handles.q_xrot_drag, &_params.q_xrot_drag);
-	param_get(_params_handles.q_yrot_drag, &_params.q_yrot_drag);
-	param_get(_params_handles.q_zrot_drag, &_params.q_zrot_drag);
+	if (updated || force) {
+
+		/* Quadrotor parameters */
+		param_get(_params_handles.q_mass, &_params.q_mass);
+		param_get(_params_handles.q_ix_moment, &_params.q_ix_moment);
+		param_get(_params_handles.q_iy_moment, &_params.q_iy_moment);
+		param_get(_params_handles.q_iz_moment, &_params.q_iz_moment);
+		param_get(_params_handles.q_arm_length, &_params.q_arm_length);
+		param_get(_params_handles.q_drag_coeff, &_params.q_drag_coeff);
+		param_get(_params_handles.q_xlin_drag, &_params.q_xlin_drag);
+		param_get(_params_handles.q_ylin_drag, &_params.q_ylin_drag);
+		param_get(_params_handles.q_zlin_drag, &_params.q_zlin_drag);
+		param_get(_params_handles.q_xrot_drag, &_params.q_xrot_drag);
+		param_get(_params_handles.q_yrot_drag, &_params.q_yrot_drag);
+		param_get(_params_handles.q_zrot_drag, &_params.q_zrot_drag);
+		param_get(_params_handles.q_rotor_radius, &_params.q_rotor_radius);
+		param_get(_params_handles.q_rotor_twist_angle, &_params.q_rotor_twist_angle);
+		param_get(_params_handles.q_rotor_root_angle, &_params.q_rotor_root_angle);
+		param_get(_params_handles.q_motor_cst, &_params.q_motor_cst);
+
+		/* Constraints parameters */
+		param_get(_params_handles.thr_min, &_params.thr_min);
+		param_get(_params_handles.thr_max, &_params.thr_max);
+		param_get(_params_handles.tilt_max_air, &_params.tilt_max_air);
+		param_get(_params_handles.land_speed, &_params.land_speed);
+		param_get(_params_handles.tilt_max_land, &_params.tilt_max_land);
+		param_get(_params_handles.man_roll_max, &_params.man_roll_max);
+		param_get(_params_handles.man_pitch_max, &_params.man_pitch_max);
+		param_get(_params_handles.man_yaw_max, &_params.man_yaw_max);
+		param_get(_params_handles.yaw_ff, &_params.yaw_ff);
+		param_get(_params_handles.roll_rate_max, &_params.roll_rate_max);
+		param_get(_params_handles.pitch_rate_max, &_params.pitch_rate_max);
+		param_get(_params_handles.yaw_rate_max, &_params.yaw_rate_max);
+
+		_params.nlibs_rate_max(0) = math::radians(_params.roll_rate_max);
+		_params.nlibs_rate_max(1) = math::radians(_params.pitch_rate_max);
+		_params.nlibs_rate_max(2) = math::radians(_params.yaw_rate_max);
+
+		_params.man_roll_max = math::radians(_params.man_roll_max);
+		_params.man_pitch_max = math::radians(_params.man_pitch_max);
+		_params.man_yaw_max = math::radians(_params.man_yaw_max);
+
+		/* A1 gains */
+		param_get(_params_handles.x_gain, &v);
+		_params.A1_gain(0,0) = v;
+		param_get(_params_handles.y_gain, &v);
+		_params.A1_gain(1,1) = v;
+
+		/* A2 gains */
+		param_get(_params_handles.x_vel_gain, &v);
+		_params.A2_gain(0,0) = v;
+		param_get(_params_handles.y_vel_gain, &v);
+		_params.A2_gain(1,1) = v;
+
+		/* A3 gains */
+		param_get(_params_handles.phi_gain, &v);
+		_params.A3_gain(0,0) = v;
+		param_get(_params_handles.theta_gain, &v);
+		_params.A3_gain(1,1) = v;
+
+		/* A4 gains */
+		param_get(_param_handles.phi_vel_gain, &v);
+		_params.A4_gain(0,0) = v;
+		param_get(_params_handles.theta_vel_gain, &v);
+		_params.A4_gain(1,1) = v;
+
+		/* A5 gains */
+		param_get(_params_handles.psi_gain, &v);
+		_params.A5_gain(0,0) = v;
+		param_get(_params_handles.z_gain, &v);
+		_params.A5_gain(1,1) = v;
+
+		/* A6 gains */
+		param_get(_params_handles.psi_vel_gain, &v);
+		_params.A6_gain(0,0) = v;
+		param_get(_params_handles.z_vel_gain, &v);
+		_params.A6_gain(1,1) = v;
+
+		/* A7 gains */
+		param_get(_params_handles.f1_gain, &v);
+		_params.A7_gain(0,0) = v;
+		param_get(_params_handles.f2_gain, &v);
+		_params.A7_gain(1,1) = v;
+		param_get(_params_handles.f3_gain, &v);
+		_params.A7_gain(2,2) = v;
+		param_get(_params_handles.f4_gain, &v);
+		_params.A7_gain(3,3) = v;
+
+		_actuators_0_circuit_breaker_enabled = circuit_breaker_enabled("CBRK_RATE_CTRL", CBRK_RATE_CTRL_KEY);
+	}
+
+	return OK;
+}
+
+void poll_subscriptions() 
+{
+	bool updated;
+
+	orb_check(_att_sub, &updated);
+
+	
 
 
 
@@ -556,60 +632,82 @@ void MulticopterNLIBSControl::parameter_update()
 
 
 
-	/* A1 gains */
-	param_get(_params_handles.x_gain, &v);
-	_params.A1_gain(0,0) = v;
-
-	param_get(_params_handles.y_gain, &v);
-	_params.A1_gain(1,1) = v;
-
-	/* A2 gains */
-	param_get(_params_handles.x_vel_gain, &v);
-	_params.A2_gain(0,0) = v;
-
-	param_get(_params_handles.y_vel_gain, &v);
-	_params.A2_gain(1,1) = v;
-
-	/* A3 gains */
-	param_get(_params_handles.phi_gain, &v);
-	_params.A3_gain(0,0) = v;
-
-	param_get(_params_handles.theta_gain, &v);
-	_params.A3_gain(1,1) = v;
-
-	/* A4 gains */
-	param_get(_param_handles.phi_vel_gain, &v);
-	_params.A4_gain(0,0) = v;
-
-	param_get(_params_handles.theta_vel_gain, &v);
-	_params.A4_gain(1,1) = v;
-
-	/* A5 gains */
-	param_get(_params_handles.psi_gain, &v);
-	_params.A5_gain(0,0) = v;
-
-	param_get(_params_handles.z_gain, &v);
-	_params.A5_gain(1,1) = v;
-
-	/* A6 gains */
-	param_get(_params_handles.psi_vel_gain, &v);
-	_params.A6_gain(0,0) = v;
-
-	param_get(_params_handles.z_vel_gain, &v);
-	_params.A6_gain(1,1) = v;
-
-	/* A7 gains */
-	param_get(_params_handles.f1_gain, &v);
-	_params.A7_gain(0,0) = v;
-
-	param_get(_params_handles.f2_gain, &v);
-	_params.A7_gain(1,1) = v;
-
-	param_get(_params_handles.f3_gain, &v);
-	_params.A7_gain(2,2) = v;
-
-	param_get(_params_handles.f4_gain, &v);
-	_params.A7_gain(3,3) = v;
 
 
 }
+
+
+
+
+
+
+
+
+
+/**
+	 * Update control outputs
+	 */
+	void control_update();
+
+	/**
+	 * Check for changes in subscribed topics.
+	 */
+	void poll_subscriptions();
+
+	static float	scale_control(float ctl, float end, float dz);
+
+	/**
+	 * Update reference for local position projection
+	 */
+	void		update_ref();
+	/**
+	 * Reset position setpoint to current position
+	 */
+	void		reset_pos_sp();
+
+	/**
+	 * Reset altitude setpoint to current altitude
+	 */
+	void		reset_alt_sp();
+
+	/**
+	 * Check if position setpoint is too far from current position and adjust it if needed.
+	 */
+	void		limit_pos_sp_offset();
+
+	/**
+	 * Set position setpoint using manual control
+	 */
+	void		control_manual(float dt);
+
+	/**
+	 * Set position setpoint using offboard control
+	 */
+	void		control_offboard(float dt);
+
+	bool		cross_sphere_line(const math::Vector<3>& sphere_c, float sphere_r,
+					const math::Vector<3> line_a, const math::Vector<3> line_b, math::Vector<3>& res);
+
+	/**
+	 * Set position setpoint for AUTO
+	 */
+	void		control_auto(float dt);
+
+	/**
+	 * Select between barometric and global (AMSL) altitudes
+	 */
+	void		select_alt(bool global);
+
+	/**
+	 * Shim for calling task_main from task_create.
+	 */
+	static void	task_main_trampoline(int argc, char *argv[]);
+
+	/**
+	 * Main sensor collection task.
+	 */
+	void		task_main();
+
+
+
+
