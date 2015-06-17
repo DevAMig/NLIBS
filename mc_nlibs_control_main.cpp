@@ -217,6 +217,9 @@ private:
 		param_t man_roll_max;
 		param_t man_pitch_max;
 		param_t man_yaw_max;
+		param_t roll_rate_max;
+		param_t pitch_rate_max;
+		param_t yaw_rate_max;
 
 	} _params_handles;		/**< handles for interesting parameters */
 
@@ -246,7 +249,6 @@ private:
 		float man_roll_max;
 		float man_pitch_max;
 		float man_yaw_max;
-		float yaw_ff;
 		float roll_rate_max;
 		float pitch_rate_max;
 		float yaw_rate_max;
@@ -280,8 +282,8 @@ private:
 	math::Vector<3> _vel_prev;			/**< velocity on previous step */
 	math::Vector<3> _vel_ff;
 	math::Vector<3> _sp_move_rate;
-	math::Vector<3>	_rates_prev;		/**< angular rates on previous step */
-	math::Vector<3>	_rates_sp;			/**< angular rates setpoint */
+	math::Vector<3>	_ang_rates_prev;		/**< angular rates on previous step */
+	math::Vector<3>	_ang_rates_sp;			/**< angular rates setpoint */
 	math::Vector<3>	_rates_int;			/**< angular rates integral error */
 	math::Vector<3>	_att_control;		/**< attitude control vector */
 
@@ -295,68 +297,10 @@ private:
 	int	parameters_update(bool force);
 
 	/**
-	 * Update control outputs
+	 * Nonlinear Integral Backstepping controller.
 	 */
-	void control_update();
+	void control_att_and_pos(float dt);
 
-	/**
-	 * Check for changes in subscribed topics.
-	 */
-	void poll_subscriptions();
-
-	static float	scale_control(float ctl, float end, float dz);
-
-	/**
-	 * Update reference for local position projection
-	 */
-	void		update_ref();
-	/**
-	 * Reset position setpoint to current position
-	 */
-	void		reset_pos_sp();
-
-	/**
-	 * Reset altitude setpoint to current altitude
-	 */
-	void		reset_alt_sp();
-
-	/**
-	 * Check if position setpoint is too far from current position and adjust it if needed.
-	 */
-	void		limit_pos_sp_offset();
-
-	/**
-	 * Set position setpoint using manual control
-	 */
-	void		control_manual(float dt);
-
-	/**
-	 * Set position setpoint using offboard control
-	 */
-	void		control_offboard(float dt);
-
-	bool		cross_sphere_line(const math::Vector<3>& sphere_c, float sphere_r,
-					const math::Vector<3> line_a, const math::Vector<3> line_b, math::Vector<3>& res);
-
-	/**
-	 * Set position setpoint for AUTO
-	 */
-	void		control_auto(float dt);
-
-	/**
-	 * Select between barometric and global (AMSL) altitudes
-	 */
-	void		select_alt(bool global);
-
-	/**
-	 * Shim for calling task_main from task_create.
-	 */
-	static void	task_main_trampoline(int argc, char *argv[]);
-
-	/**
-	 * Main sensor collection task.
-	 */
-	void		task_main();
 };
 
 namespace nlibs_control
@@ -373,7 +317,7 @@ MulticopterNLIBSControl	*g_control;
 
 MulticopterNLIBSControl::MulticopterNLIBSControl() :
 
-	b_task_should_exit(false),
+	_task_should_exit(false),
 	_control_task(-1),
 	_mavlink_fd(-1),
 
@@ -382,7 +326,7 @@ MulticopterNLIBSControl::MulticopterNLIBSControl() :
 	_att_sp_sub(-1),
 	_control_mode_sub(-1),
 	_params_sub(-1),
-	_manual_sub(-1)(-1),
+	_manual_sub(-1),
 	_arming_sub(-1),
 	_local_pos_sub(-1),
 	_pos_sp_triplet_sub(-1),
@@ -397,7 +341,7 @@ MulticopterNLIBSControl::MulticopterNLIBSControl() :
 	_v_rates_sp_pub(-1),
 	_actuators_0_pub(-1),
 
-	_actuators_0_circuit_breaker_enabled(false),
+	_actuators_0_circuit_breaker_enabled(false)
 
 {
 	memset(&_att, 0, sizeof(_att));
@@ -414,7 +358,6 @@ MulticopterNLIBSControl::MulticopterNLIBSControl() :
 	memset(&_pos_sp_triplet, 0, sizeof(_pos_sp_triplet));
 	memset(&_local_pos_sp, 0, sizeof(_local_pos_sp));
 	memset(&_global_vel_sp, 0, sizeof(_global_vel_sp));
-
 	memset(&_ref_pos, 0, sizeof(_ref_pos));
 
 	_params.nlibs_rate_max.zero();
@@ -434,8 +377,8 @@ MulticopterNLIBSControl::MulticopterNLIBSControl() :
 	_vel_prev.zero();
 	_vel_ff.zero();
 	_sp_move_rate.zero();
-	_rates_prev.zero();
-	_rates_sp.zero();
+	_ang_rates_prev.zero();
+	_ang_rates_sp.zero();
 	_rates_int.zero();
 	_att_control.zero();
 
@@ -453,7 +396,7 @@ MulticopterNLIBSControl::MulticopterNLIBSControl() :
 	_params_handles.q_zrot_drag			= param_find("NLIBSC_QZROT_DRAG");
 	_params_handles.q_rotor_radius		= param_find("NLIBSC_QROTOR_RADIUS");
 	_params_handles.q_rotor_twist_angle	= param_find("NLIBSC_QROTOR_TWIST_ANGLE");
-	_params_handles.q_rotor _root_angle	= param_find("NLIBSC_QROTOR_ROOT_ANGLE");
+	_params_handles.q_rotor_root_angle	= param_find("NLIBSC_QROTOR_ROOT_ANGLE");
 	_params_handles.q_motor_cst			= param_find("NLIBSC_QMOTOR_CST");
 
 	_params_handles.thr_min				= param_find("NLIBSC_THR_MIN");
@@ -475,14 +418,17 @@ MulticopterNLIBSControl::MulticopterNLIBSControl() :
 	_params_handles.f3_gain				= param_find("NLIBSC_F3_GAIN");
 	_params_handles.f4_gain				= param_find("NLIBSC_F4_GAIN");
 
-	_params_handles.xy_vel_max			= param_find("NLIBSC_ROLL_RATE_MAX");
-	_params_handles.xy_ff				= param_find("NLIBSC_PITCH_RATE_MAX");
-	_params_handles.tilt_max_air		= param_find("NLIBSC_YAW_RATE_MAX");
-	_params_handles.tilt_max_land		= param_find("NLIBSC_XY_VEL_MAX");
-	_params_handles.land_speed			= param_find("NLIBSC_XY_FF");
-	_params_handles.man_roll_max		= param_find("NLIBSC_TILTMAX_AIR");
-	_params_handles.man_pitch_max		= param_find("NLIBSC_TILTMAX_LND");
-	_params_handles.man_yaw_max			= param_find("NLIBSC_LAND_SPEED");
+	_params_handles.xy_vel_max			= param_find("NLIBSC_XY_VEL_MAX");
+	_params_handles.xy_ff				= param_find("NLIBSC_XY_FF");
+	_params_handles.tilt_max_air		= param_find("NLIBSC_TILTMAX_AIR");
+	_params_handles.tilt_max_land		= param_find("NLIBSC_TILTMAX_LND");
+	_params_handles.land_speed			= param_find("NLIBSC_LAND_SPEED");
+	_params_handles.man_roll_max		= param_find("NLIBSC_MAN_R_MAX");
+	_params_handles.man_pitch_max		= param_find("NLIBSC_MAN_P_MAX");
+	_params_handles.man_yaw_max			= param_find("NLIBSC_MAN_Y_MAX");
+	_params_handles.roll_rate_max		= param_find("NLIBSC_ROLL_RATE_MAX");
+	_params_handles.pitch_rate_max		= param_find("NLIBSC_PITCH_RATE_MAX");
+	_params_handles.yaw_rate_max		= param_find("NLIBSC_YAW_RATE_MAX");
 
 	/* fetch initial parameter values */
 	parameters_update(true);
@@ -512,7 +458,7 @@ MulticopterNLIBSControl::~MulticopterNLIBSControl()
 	pos_control::g_control = nullptr;
 }
 
-void MulticopterNLIBSControl::parameter_update(bool force)
+int MulticopterNLIBSControl::parameters_update(bool force)
 {
 	bool updated;
 	float v;
@@ -553,7 +499,6 @@ void MulticopterNLIBSControl::parameter_update(bool force)
 		param_get(_params_handles.man_roll_max, &_params.man_roll_max);
 		param_get(_params_handles.man_pitch_max, &_params.man_pitch_max);
 		param_get(_params_handles.man_yaw_max, &_params.man_yaw_max);
-		param_get(_params_handles.yaw_ff, &_params.yaw_ff);
 		param_get(_params_handles.roll_rate_max, &_params.roll_rate_max);
 		param_get(_params_handles.pitch_rate_max, &_params.pitch_rate_max);
 		param_get(_params_handles.yaw_rate_max, &_params.yaw_rate_max);
@@ -618,18 +563,16 @@ void MulticopterNLIBSControl::parameter_update(bool force)
 	return OK;
 }
 
-void poll_subscriptions() 
+/**
+ * TODO Poll subscriptions
+ */
+
+void MulticopterNLIBSControl::control_att_and_pos(float dt)
 {
-	bool updated;
+	/* Rotation matrix */
+	math::Matrix<3, 3>  R;
 
-	orb_check(_att_sub, &updated);
-
-	
-
-
-
-
-
+	R(0,0) =
 
 
 
@@ -638,75 +581,61 @@ void poll_subscriptions()
 
 
 
+void MulticopterNLIBSControl::task_main()
+{
+	_mavlink_fd = open(MAVLINK_LOG_DEVICE, 0);
 
-
-
-
-
-
-/**
-	 * Update control outputs
+	/*
+	 * do subscriptions
 	 */
-	void control_update();
+	_att_sub = orb_subscribe(ORB_ID(vehicle_attitude));
+	_att_sp_sub = orb_subscribe(ORB_ID(vehicle_attitude_setpoint));
+	_control_mode_sub = orb_subscribe(ORB_ID(vehicle_control_mode));
+	_params_sub = orb_subscribe(ORB_ID(parameter_update));
+	_manual_sub = orb_subscribe(ORB_ID(manual_control_setpoint));
+	_arming_sub = orb_subscribe(ORB_ID(actuator_armed));
+	_local_pos_sub = orb_subscribe(ORB_ID(vehicle_local_position));
+	_pos_sp_triplet_sub = orb_subscribe(ORB_ID(position_setpoint_triplet));
+	_local_pos_sp_sub = orb_subscribe(ORB_ID(vehicle_local_position_setpoint));
+	_global_vel_sp_sub = orb_subscribe(ORB_ID(vehicle_global_velocity_setpoint));
 
-	/**
-	 * Check for changes in subscribed topics.
-	 */
-	void poll_subscriptions();
 
-	static float	scale_control(float ctl, float end, float dz);
 
-	/**
-	 * Update reference for local position projection
-	 */
-	void		update_ref();
-	/**
-	 * Reset position setpoint to current position
-	 */
-	void		reset_pos_sp();
 
-	/**
-	 * Reset altitude setpoint to current altitude
-	 */
-	void		reset_alt_sp();
+	int		_att_sub;				/**< vehicle attitude subscription */
+	int		_att_sp_sub;			/**< vehicle attitude setpoint */
+	int		_control_mode_sub;		/**< vehicle control mode subscription */
+	int		_params_sub;			/**< notification of parameter updates */
+	int		_manual_sub;			/**< notification of manual control updates */
+	int		_arming_sub;			/**< arming status of outputs */
+	int		_local_pos_sub;			/**< vehicle local position */
+	int		_pos_sp_triplet_sub;	/**< position setpoint triplet */
+	int		_local_pos_sp_sub;		/**< offboard local position setpoint */
+	int		_global_vel_sp_sub;		/**< offboard global velocity setpoint */
 
-	/**
-	 * Check if position setpoint is too far from current position and adjust it if needed.
-	 */
-	void		limit_pos_sp_offset();
+	orb_advert_t	_att_sp_pub;			/**< attitude setpoint publication */
+	orb_advert_t	_local_pos_sp_pub;		/**< vehicle local position setpoint publication */
+	orb_advert_t	_global_vel_sp_pub;		/**< vehicle global velocity setpoint publication */
+	orb_advert_t	_controller_status_pub;	/**< controller status publication */
+	orb_advert_t	_v_rates_sp_pub;		/**< rate setpoint publication */
+	orb_advert_t	_actuators_0_pub;		/**< attitude actuator controls publication */
 
-	/**
-	 * Set position setpoint using manual control
-	 */
-	void		control_manual(float dt);
 
-	/**
-	 * Set position setpoint using offboard control
-	 */
-	void		control_offboard(float dt);
+}
 
-	bool		cross_sphere_line(const math::Vector<3>& sphere_c, float sphere_r,
-					const math::Vector<3> line_a, const math::Vector<3> line_b, math::Vector<3>& res);
 
-	/**
-	 * Set position setpoint for AUTO
-	 */
-	void		control_auto(float dt);
 
-	/**
-	 * Select between barometric and global (AMSL) altitudes
-	 */
-	void		select_alt(bool global);
 
-	/**
-	 * Shim for calling task_main from task_create.
-	 */
-	static void	task_main_trampoline(int argc, char *argv[]);
+²
 
-	/**
-	 * Main sensor collection task.
-	 */
-	void		task_main();
+
+
+
+
+
+
+
+
 
 
 
