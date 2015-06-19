@@ -569,10 +569,93 @@ int MulticopterNLIBSControl::parameters_update(bool force)
 
 void MulticopterNLIBSControl::control_att_and_pos(float dt)
 {
-	/* Rotation matrix */
-	math::Matrix<3, 3>  R;
+	/* Forces */
+    float u_z =
 
-	R(0,0) =
+
+    		-(F1+F2+F3+F4);
+    u_Phi = cos(pi/4)*d*((F3+F2)-(F1+F4));
+    u_Theta = cos(pi/4)*d*((F1+F3)-(F2+F4));
+    u_Psy = c*(F1-F3+F2-F4);
+
+
+
+	/* Rotation matrix */
+	math::Matrix<3, 3>  Rt;
+	math::Matrix<3, 3>  Rr;
+
+	float phi = _att(0);
+	float theta = _att(1);
+	float psi = _att(2);
+
+	Rt(0,0) = cos(theta)*cos(psi);
+	Rt(0,1) = sin(theta)*sin(phi)*cos(psi) - sin(psi)*cos(phi);
+	Rt(0,2) = sin(theta)*cos(phi)*cos(psi) + sin(psi)*sin(phi);
+	Rt(1,0) = cos(theta)*sin(psi);
+	Rt(1,1) = sin(theta)*sin(phi)*sin(psi) + cos(psi)*cos(phi);
+	Rt(1,2) = sin(theta)*cos(phi)*sin(psi) - cos(psi)*sin(phi);
+	Rt(2,0) = -sin(theta);
+	Rt(2,1) = cos(theta)*sin(phi);
+	Rt(2,2) = cos(theta)*cos(phi);
+
+	Rr(0,0) = 1;
+	Rr(0,1) = 0;
+	Rr(0,2) = -sin(theta);
+	Rr(1,0) = 0;
+	Rr(1,1) = cos(phi);
+	Rr(1,2) = cos(theta)*cos(phi);
+	Rr(2,0) = 0;
+	Rr(2,1) = -sin(phi);
+	Rr(2,2) = cos(phi)*cos(theta);
+
+	/* Partial derivative of rotation matrix */
+	math::Matrix<3, 3>  dRrdPhi;
+	math::Matrix<3, 3>  dRrdTheta;
+
+	dRrdPhi(0,0) = 0;
+	dRrdPhi(0,1) = 0;
+	dRrdPhi(0,2) = 0;
+	dRrdPhi(1,0) = 0;
+	dRrdPhi(1,1) = -sin(phi);
+	dRrdPhi(1,2) = cos(theta)*cos(phi);
+	dRrdPhi(2,0) = 0;
+	dRrdPhi(2,1) = -cos(phi);
+	dRrdPhi(2,2) = -cos(theta)*sin(phi);
+
+	dRrdTheta(0,0) = 0;
+	dRrdTheta(0,1) = 0;
+	dRrdTheta(0,2) = -cos(theta);
+	dRrdTheta(1,0) = 0;
+	dRrdTheta(1,1) = 0;
+	dRrdTheta(1,2) = -sin(theta)*sin(phi);
+	dRrdTheta(2,0) = 0;
+	dRrdTheta(2,1) = 0;
+	dRrdTheta(2,2) = -sin(theta)*cos(phi);
+
+	/* Computing gains */
+
+
+	/*
+	g0 = ((u_z)/m)*[sin(Psi), cos(Psi);
+	    -cos(Psi), sin(Psi)];
+
+	g1 = [1/Ix, sin(Phi)*tan(Theta)/Iy;
+	    0     cos(Phi)/Iy];
+
+	g2 = [cos(Phi)*sec(Theta)/Iz    0;
+	    0                         cos(Phi)*cos(Theta)/m];
+
+	Varphi0 = [sin(Phi);
+	    cos(Phi)*sin(Theta)];
+
+	Varphi1 = [u_Phi;
+	    u_Theta];
+
+	Varphi2 = [u_Psy;
+	    u_z];
+
+*/
+
 
 
 
